@@ -2,9 +2,10 @@
 #include <SPI.h>
 #include <RadioLib.h>
 
-// ==========================
-// PINOS LoRa (VALIDADOS)
-// ==========================
+// =====================================================
+// PINOS LORA (VALIDADOS)
+// =====================================================
+
 #define LORA_SCK   5
 #define LORA_MISO  19
 #define LORA_MOSI  27
@@ -12,12 +13,17 @@
 #define LORA_DIO0  26
 #define LORA_RST   14
 
+// =====================================================
+// OBJETOS GLOBAIS
+// =====================================================
+
 SPIClass spiLoRa(VSPI);
 SX1276 radio = new Module(LORA_CS, LORA_DIO0, LORA_RST, RADIOLIB_NC, spiLoRa);
 
-// ==========================
+// =====================================================
 // PROTOCOLO
-// ==========================
+// =====================================================
+
 constexpr uint8_t MAGIC_BYTE    = 0xA5;
 constexpr uint8_t PROTO_VERSION = 0x01;
 
@@ -26,9 +32,10 @@ constexpr uint8_t MSG_ACK  = 0x20;
 
 constexpr uint8_t GATEWAY_ID = 0xF0;
 
-// ==========================
+// =====================================================
 // PAYLOAD REAL DA COLMEIA
-// ==========================
+// =====================================================
+
 struct PayloadColmeia {
   int16_t tempInterna_x100;
   uint16_t umidInterna_x100;
@@ -37,30 +44,53 @@ struct PayloadColmeia {
   uint16_t umidExterna_x100;
 
   int32_t peso_x1000;
+  uint16_t bateria_mV;
 
   uint8_t flags;
   uint8_t reservado;
 };
 
-// ==========================
+// =====================================================
+// CONTROLE DE DUPLICIDADE
+// =====================================================
+
+uint8_t lastSeq = 255;
+
+// =====================================================
+// PROTOTIPOS
+// =====================================================
+
+uint16_t crc16(const uint8_t* data, size_t len);
+bool validPacket(uint8_t* buf, size_t len);
+size_t buildAck(uint8_t seq, uint8_t* buf);
+void initRadio();
+
+// =====================================================
 // CRC16
-// ==========================
+// =====================================================
+
 uint16_t crc16(const uint8_t* data, size_t len) {
   uint16_t crc = 0xFFFF;
+
   for (size_t i = 0; i < len; i++) {
     crc ^= (uint16_t)data[i] << 8;
+
     for (uint8_t b = 0; b < 8; b++) {
       crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
     }
   }
+
   return crc;
 }
 
-// ==========================
+// =====================================================
 // VALIDA PACOTE DATA
-// ==========================
+// =====================================================
+
 bool validPacket(uint8_t* buf, size_t len) {
-  if (len < 8) return false;
+  if (len < 8) {
+    return false;
+  }
 
   uint16_t crc_rx = (buf[len - 2] << 8) | buf[len - 1];
   uint16_t crc_calc = crc16(buf, len - 2);
@@ -73,9 +103,10 @@ bool validPacket(uint8_t* buf, size_t len) {
   );
 }
 
-// ==========================
+// =====================================================
 // MONTA ACK
-// ==========================
+// =====================================================
+
 size_t buildAck(uint8_t seq, uint8_t* buf) {
   size_t i = 0;
 
@@ -93,15 +124,17 @@ size_t buildAck(uint8_t seq, uint8_t* buf) {
   return i;
 }
 
-// ==========================
+// =====================================================
 // INIT RADIO
-// ==========================
+// =====================================================
+
 void initRadio() {
   spiLoRa.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_CS);
   delay(100);
 
   if (radio.begin() != RADIOLIB_ERR_NONE) {
     Serial.println("Erro init radio");
+
     while (true) {
       delay(1000);
     }
@@ -117,12 +150,10 @@ void initRadio() {
   Serial.println("Radio RX OK");
 }
 
-// ==========================
-// CONTROLE DE DUPLICIDADE
-// ==========================
-uint8_t lastSeq = 255;
+// =====================================================
+// SETUP
+// =====================================================
 
-// ==========================
 void setup() {
   Serial.begin(115200);
   delay(1500);
@@ -131,17 +162,24 @@ void setup() {
   initRadio();
 }
 
-// ==========================
+// =====================================================
+// LOOP
+// =====================================================
+
 void loop() {
   uint8_t buf[64];
 
   int state = radio.receive(buf, sizeof(buf), 1000);
 
-  if (state != RADIOLIB_ERR_NONE) return;
+  if (state != RADIOLIB_ERR_NONE) {
+    return;
+  }
 
   size_t len = radio.getPacketLength();
 
-  if (!validPacket(buf, len)) return;
+  if (!validPacket(buf, len)) {
+    return;
+  }
 
   uint8_t nodeId = buf[3];
   uint8_t seq = buf[4];
@@ -174,6 +212,7 @@ void loop() {
   bool dhtExternoValido = p.flags & (1 << 1);
 
   Serial.println();
+
   Serial.print("RX node=");
   Serial.print(nodeId);
   Serial.print(" seq=");
@@ -182,19 +221,34 @@ void loop() {
   Serial.print("Peso (kg): ");
   Serial.println(p.peso_x1000 / 1000.0f, 3);
 
+  Serial.print("Bateria (V): ");
+  Serial.println(p.bateria_mV / 1000.0f, 3);
+
   Serial.print("Temp interna (C): ");
-  if (dhtInternoValido) Serial.println(p.tempInterna_x100 / 100.0f, 2);
-  else Serial.println("ERRO");
+  if (dhtInternoValido) {
+    Serial.println(p.tempInterna_x100 / 100.0f, 2);
+  } else {
+    Serial.println("ERRO");
+  }
 
   Serial.print("Umid interna (%): ");
-  if (dhtInternoValido) Serial.println(p.umidInterna_x100 / 100.0f, 2);
-  else Serial.println("ERRO");
+  if (dhtInternoValido) {
+    Serial.println(p.umidInterna_x100 / 100.0f, 2);
+  } else {
+    Serial.println("ERRO");
+  }
 
   Serial.print("Temp externa (C): ");
-  if (dhtExternoValido) Serial.println(p.tempExterna_x100 / 100.0f, 2);
-  else Serial.println("ERRO");
+  if (dhtExternoValido) {
+    Serial.println(p.tempExterna_x100 / 100.0f, 2);
+  } else {
+    Serial.println("ERRO");
+  }
 
   Serial.print("Umid externa (%): ");
-  if (dhtExternoValido) Serial.println(p.umidExterna_x100 / 100.0f, 2);
-  else Serial.println("ERRO");
+  if (dhtExternoValido) {
+    Serial.println(p.umidExterna_x100 / 100.0f, 2);
+  } else {
+    Serial.println("ERRO");
+  }
 }

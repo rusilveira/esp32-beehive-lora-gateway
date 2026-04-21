@@ -1,28 +1,47 @@
 # ESP32 Beehive LoRa Gateway
 
-ESP32-based LoRa gateway for receiving data from beehive sensor nodes.
+ESP32-based LoRa gateway for receiving and decoding data from smart beehive sensor nodes.
+
+---
 
 ## Overview
 
-This project implements a LoRa gateway using ESP32 and SX1276.
+This project implements a **LoRa gateway using ESP32 + SX1276**, designed to receive data from remote beehive monitoring nodes.
 
 The gateway is responsible for:
 
 - receiving data packets from sensor nodes
 - validating packets using CRC16
-- sending ACK confirmations
-- decoding payload data
-- printing sensor data via serial (future: backend integration)
+- sending ACK confirmations (reliable communication)
+- detecting duplicate packets
+- decoding structured payload data
+- printing sensor data via serial output
 
 ---
 
 ## Features
 
-- LoRa communication (SX1276)
-- Reliable protocol support (ACK, CRC, sequence)
+- LoRa communication (SX1276 / RadioLib)
+- Reliable protocol (ACK + CRC16 + sequence control)
 - Duplicate packet detection
-- Payload decoding
-- Ready for backend integration
+- Structured payload decoding (beehive data)
+- Clean and deterministic firmware behavior
+- Ready for backend integration (next step)
+
+---
+
+## Payload Structure
+
+The gateway decodes the following data sent by the node:
+
+- Internal temperature (°C)
+- Internal humidity (%)
+- External temperature (°C)
+- External humidity (%)
+- Hive weight (kg)
+- Battery voltage (V)
+
+All values are transmitted in scaled integer format for efficiency.
 
 ---
 
@@ -31,14 +50,14 @@ The gateway is responsible for:
 - ESP32
 - SX1276 LoRa module
 
-### Pin map
+### Pin Mapping
 
-- SCK: GPIO 5
-- MISO: GPIO 19
-- MOSI: GPIO 27
-- CS: GPIO 18
-- DIO0: GPIO 26
-- RST: GPIO 14
+- SCK: GPIO 5  
+- MISO: GPIO 19  
+- MOSI: GPIO 27  
+- CS: GPIO 18  
+- DIO0: GPIO 26  
+- RST: GPIO 14  
 
 ---
 
@@ -46,29 +65,51 @@ The gateway is responsible for:
 
 1. Initialize LoRa radio
 2. Wait for incoming packet
-3. Validate packet (CRC + structure)
-4. Send ACK
-5. Check duplication
-6. Decode payload
-7. Print values
+3. Validate packet (CRC + protocol structure)
+4. Send ACK to node
+5. Check for duplicate packet (sequence control)
+6. Decode payload data
+7. Print formatted values via serial
+
+---
+
+## Example Output
+
+RX node=1 seq=10
+
+Peso (kg): 0.573
+Bateria (V): 4.107
+Temp interna (C): 22.30
+Umid interna (%): 62.80
+Temp externa (C): 22.10
+Umid externa (%): 63.90
 
 ---
 
 ## Current Status
 
-- Stable LoRa reception
-- ACK working
+- Stable LoRa communication
+- Reliable ACK protocol working
+- CRC validation working
 - Duplicate detection working
-- Payload decoding working
+- Payload decoding fully operational
 
 ---
 
-## Future Improvements
+## Next Steps
 
-- HTTP API integration
-- Database storage
+- Integration with backend (HTTP / API)
+- Data persistence (database)
 - Web dashboard
-- Multi-node support
+- Multi-node scalability
+
+---
+
+## Related Projects
+
+- Beehive sensor node (ESP32 + LoRa + sensors)
+- Backend API (Node.js)
+- Monitoring dashboard
 
 ---
 

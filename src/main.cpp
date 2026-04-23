@@ -1,6 +1,9 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <RadioLib.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "config.h"
 
 // =====================================================
 // PINOS LORA (VALIDADOS)
@@ -21,6 +24,23 @@ SPIClass spiLoRa(VSPI);
 SX1276 radio = new Module(LORA_CS, LORA_DIO0, LORA_RST, RADIOLIB_NC, spiLoRa);
 
 // =====================================================
+// SUPERVISAO WIFI / API
+// =====================================================
+
+static const unsigned long WIFI_CHECK_INTERVAL_MS = 10000;
+static const unsigned long WIFI_RECONNECT_TIMEOUT_MS = 15000;
+static const unsigned long OFFLINE_RESTART_TIMEOUT_MS = 20UL * 60UL * 1000UL; // 20 min
+static const uint8_t MAX_WIFI_FAILS = 5;
+static const uint8_t MAX_API_FAILS = 5;
+
+static unsigned long ultimoCheckWiFiMs = 0;
+static unsigned long ultimoSucessoApiMs = 0;
+static unsigned long ultimoWiFiOkMs = 0;
+
+static uint8_t falhasWiFiConsecutivas = 0;
+static uint8_t falhasApiConsecutivas = 0;
+
+// =====================================================
 // PROTOCOLO
 // =====================================================
 
@@ -31,6 +51,93 @@ constexpr uint8_t MSG_DATA = 0x10;
 constexpr uint8_t MSG_ACK  = 0x20;
 
 constexpr uint8_t GATEWAY_ID = 0xF0;
+
+// =====================================================
+// FUNÇÃO CONEXÃO WIFI
+// =====================================================
+
+static bool conectarWiFi(unsigned long timeoutMs) {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false, true);
+  delay(500);
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("[WIFI] Conectando");
+
+  unsigned long inicio = millis();
+
+  while (WiFi.status() != WL_CONNECTED && (millis() - inicio) < timeoutMs) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("[WIFI] Conectado");
+    Serial.print("[WIFI] IP: ");
+    Serial.println(WiFi.localIP());
+
+    ultimoWiFiOkMs = millis();
+    falhasWiFiConsecutivas = 0;
+    return true;
+  }
+
+  Serial.println("[WIFI] Falha na conexao");
+  falhasWiFiConsecutivas++;
+  return false;
+}
+
+static void garantirWiFiConectado() {
+  if (WiFi.status() == WL_CONNECTED) {
+    ultimoWiFiOkMs = millis();
+    return;
+  }
+
+  Serial.println("[WIFI] Desconectado. Tentando reconectar...");
+  bool ok = conectarWiFi(WIFI_RECONNECT_TIMEOUT_MS);
+
+  if (!ok) {
+    Serial.print("[WIFI] Falhas consecutivas: ");
+    Serial.println(falhasWiFiConsecutivas);
+
+    if (falhasWiFiConsecutivas >= MAX_WIFI_FAILS) {
+      Serial.println("[WIFI] Muitas falhas consecutivas. Reiniciando ESP...");
+      delay(1000);
+      ESP.restart();
+    }
+  }
+}
+
+static void verificarSaudeSistema() {
+  unsigned long agora = millis();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    ultimoWiFiOkMs = agora;
+  }
+
+  bool offlineWiFi = (agora - ultimoWiFiOkMs) > OFFLINE_RESTART_TIMEOUT_MS;
+  bool offlineApi = ultimoSucessoApiMs > 0 && (agora - ultimoSucessoApiMs) > OFFLINE_RESTART_TIMEOUT_MS;
+
+  if (offlineWiFi) {
+    Serial.println("[SYS] Muito tempo sem WiFi valido. Reiniciando ESP...");
+    delay(1000);
+    ESP.restart();
+  }
+
+  if (falhasApiConsecutivas >= MAX_API_FAILS) {
+    Serial.println("[SYS] Muitas falhas consecutivas de API. Reiniciando ESP...");
+    delay(1000);
+    ESP.restart();
+  }
+
+  if (offlineApi && WiFi.status() == WL_CONNECTED) {
+    Serial.println("[SYS] Muito tempo sem sucesso de envio HTTP. Reiniciando ESP...");
+    delay(1000);
+    ESP.restart();
+  }
+}
 
 // =====================================================
 // PAYLOAD REAL DA COLMEIA
@@ -51,6 +158,64 @@ struct PayloadColmeia {
 };
 
 // =====================================================
+// FUNÇÃO HTTP
+// =====================================================
+
+static void enviarParaBackend(
+  uint8_t nodeId,
+  uint8_t seq,
+  PayloadColmeia& p
+) {
+  garantirWiFiConectado();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[API] WiFi indisponivel. Envio cancelado.");
+    falhasApiConsecutivas++;
+    return;
+  }
+
+  HTTPClient http;
+  http.setTimeout(10000);
+
+  http.begin(API_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  String json = "{";
+
+  json += "\"colmeia_id\":\"jatai_01\",";
+  json += "\"peso\":" + String(p.peso_x1000 / 1000.0f, 3) + ",";
+  json += "\"bateria\":" + String(p.bateria_mV / 1000.0f, 3) + ",";
+
+  json += "\"interna\":{";
+  json += "\"temperatura\":" + String(p.tempInterna_x100 / 100.0f, 2) + ",";
+  json += "\"umidade\":" + String(p.umidInterna_x100 / 100.0f, 2);
+  json += "},";
+
+  json += "\"externa\":{";
+  json += "\"temperatura\":" + String(p.tempExterna_x100 / 100.0f, 2) + ",";
+  json += "\"umidade\":" + String(p.umidExterna_x100 / 100.0f, 2);
+  json += "}";
+
+  json += "}";
+
+  int httpCode = http.POST(json);
+
+  Serial.print("[API] HTTP code: ");
+  Serial.println(httpCode);
+
+  if (httpCode > 0 && httpCode < 400) {
+    ultimoSucessoApiMs = millis();
+    falhasApiConsecutivas = 0;
+  } else {
+    falhasApiConsecutivas++;
+    Serial.print("[API] Falhas consecutivas: ");
+    Serial.println(falhasApiConsecutivas);
+  }
+
+  http.end();
+}
+
+// =====================================================
 // CONTROLE DE DUPLICIDADE
 // =====================================================
 
@@ -64,6 +229,10 @@ uint16_t crc16(const uint8_t* data, size_t len);
 bool validPacket(uint8_t* buf, size_t len);
 size_t buildAck(uint8_t seq, uint8_t* buf);
 void initRadio();
+
+bool conectarWiFi(unsigned long timeoutMs = WIFI_RECONNECT_TIMEOUT_MS);
+void garantirWiFiConectado();
+void verificarSaudeSistema();
 
 // =====================================================
 // CRC16
@@ -159,6 +328,9 @@ void setup() {
   delay(1500);
 
   Serial.println("=== RX GATEWAY ===");
+
+  conectarWiFi();
+  ultimoSucessoApiMs = millis();
   initRadio();
 }
 
@@ -167,6 +339,14 @@ void setup() {
 // =====================================================
 
 void loop() {
+  unsigned long agora = millis();
+
+  if (agora - ultimoCheckWiFiMs >= WIFI_CHECK_INTERVAL_MS) {
+    ultimoCheckWiFiMs = agora;
+    garantirWiFiConectado();
+    verificarSaudeSistema();
+  }
+
   uint8_t buf[64];
 
   int state = radio.receive(buf, sizeof(buf), 1000);
@@ -207,6 +387,7 @@ void loop() {
 
   PayloadColmeia p;
   memcpy(&p, &buf[6], sizeof(PayloadColmeia));
+  enviarParaBackend(nodeId, seq, p);
 
   bool dhtInternoValido = p.flags & (1 << 0);
   bool dhtExternoValido = p.flags & (1 << 1);

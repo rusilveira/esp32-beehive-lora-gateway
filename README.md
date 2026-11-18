@@ -2,6 +2,18 @@
 
 ESP32-based LoRa gateway responsible for receiving, validating, decoding and forwarding data from smart beehive sensor nodes.
 
+> Part of the **[Smart Beehive Monitoring System](https://github.com/rusilveira/rusilveira#smart-beehive-monitoring-system)**: [sensor node](https://github.com/rusilveira/esp32-beehive-sensor-node-lora) · [LoRa link](https://github.com/rusilveira/esp32-lora-reliable-link) · **gateway** · [API](https://github.com/rusilveira/mms-backend) · [dashboard](https://github.com/rusilveira/mms-frontend)
+
+---
+
+## Problem
+
+Sensor nodes in the field cannot reach the internet directly, and a radio link can lose, corrupt or repeat packets.
+
+## Solution
+
+An ESP32 gateway that receives LoRa packets, checks their integrity, confirms delivery to the node, discards duplicates and forwards each reading to the API over Wi-Fi. It supervises Wi-Fi and API health and restarts itself after persistent failures.
+
 ---
 
 ## Overview
@@ -135,6 +147,23 @@ Example:
 #define API_URL "http://your-backend-url/api/readings"
 ```
 
+Keep real credentials only in your local copy. Never commit them.
+
+---
+
+## Build and flash
+
+Requires [PlatformIO](https://platformio.org/) (VS Code extension or CLI).
+
+Fill in `include/config.h` (see Configuration) before building.
+
+```bash
+git clone https://github.com/rusilveira/esp32-beehive-lora-gateway.git
+cd esp32-beehive-lora-gateway
+pio run --target upload
+pio device monitor
+```
+
 ---
 
 ## Current Status
@@ -168,14 +197,11 @@ ESP32 Node → LoRa → Gateway → Wi-Fi → Backend API → PostgreSQL → Das
 
 ---
 
-## Related Projects
-
-* Beehive sensor node (ESP32 + LoRa + sensors)
-* Backend API (Node.js + PostgreSQL)
-* Monitoring dashboard (React)
-
----
-
 ## Author
 
-Ruan Silveira
+**Ruan Silveira** · Industrial instrumentation technician and Electrical Engineering student  
+[GitHub](https://github.com/rusilveira) · [LinkedIn](https://www.linkedin.com/in/ruan-silveira-494110257)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
